@@ -1,7 +1,9 @@
-langchain
-langGraph
 streamlit
+langchain
 langchain-openai
-python-dotenv
+langgraph
 langchain-community
+python-dotenv
 tavily-python
+openai
+fpdf
