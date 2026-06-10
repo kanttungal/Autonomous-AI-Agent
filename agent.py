@@ -1,4 +1,5 @@
 import os
+import streamlit as st
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from typing import TypedDict
@@ -7,11 +8,26 @@ from langchain_community.tools.tavily_search import TavilySearchResults
 
 load_dotenv()
 
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+
+if not OPENROUTER_API_KEY:
+    OPENROUTER_API_KEY = st.secrets["OPENROUTER_API_KEY"]
+
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+
+if not TAVILY_API_KEY:
+    TAVILY_API_KEY = st.secrets["TAVILY_API_KEY"]
+
+os.environ["TAVILY_API_KEY"] = TAVILY_API_KEY
+
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+
 llm = ChatOpenAI(
     base_url="https://openrouter.ai/api/v1",
     model="meta-llama/llama-3-8b-instruct",
-    api_key=os.getenv("OPENROUTER_API_KEY")
+    api_key=OPENROUTER_API_KEY
 )
+
 
 
 search = TavilySearchResults(max_results=3)
