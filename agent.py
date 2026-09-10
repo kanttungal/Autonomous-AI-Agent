@@ -24,8 +24,9 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 llm = ChatOpenAI(
     base_url="https://openrouter.ai/api/v1",
-    model="meta-llama/llama-3.1-8b-instruct",
-    api_key=OPENROUTER_API_KEY
+    model="openrouter/free",
+    api_key=OPENROUTER_API_KEY,
+    max_tokens = 1000
 )
 
 
