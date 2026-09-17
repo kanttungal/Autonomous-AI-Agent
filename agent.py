@@ -1,33 +1,70 @@
+# agent.py
+
 import os
 import time
+from typing import TypedDict
+
 import streamlit as st
 from dotenv import load_dotenv
+
 from langchain_openai import ChatOpenAI
-from typing import TypedDict
-from langgraph.graph import StateGraph, END
 from langchain_community.tools.tavily_search import TavilySearchResults
+from langgraph.graph import StateGraph, END
 
 
 # ============================================================
 # ENVIRONMENT
 # ============================================================
 
-load_dotenv()
+load_dotenv(override = True)
 
+
+# ============================================================
+# OPENROUTER API KEY
+# ============================================================
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 if not OPENROUTER_API_KEY:
-    OPENROUTER_API_KEY = st.secrets["OPENROUTER_API_KEY"]
+    try:
+        OPENROUTER_API_KEY = st.secrets["OPENROUTER_API_KEY"]
+    except Exception:
+        OPENROUTER_API_KEY = None
 
+
+# ============================================================
+# TAVILY API KEY
+# ============================================================
 
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 
 if not TAVILY_API_KEY:
-    TAVILY_API_KEY = st.secrets["TAVILY_API_KEY"]
+    try:
+        TAVILY_API_KEY = st.secrets["TAVILY_API_KEY"]
+    except Exception:
+        TAVILY_API_KEY = None
 
 
-os.environ["TAVILY_API_KEY"] = TAVILY_API_KEY
+if TAVILY_API_KEY:
+    os.environ["TAVILY_API_KEY"] = TAVILY_API_KEY
+
+
+# ============================================================
+# CHECK API KEY
+# ============================================================
+
+if not OPENROUTER_API_KEY:
+    raise ValueError(
+        "OPENROUTER_API_KEY not found. "
+        "Add it to .env or .streamlit/secrets.toml"
+    )
+
+
+if not TAVILY_API_KEY:
+    raise ValueError(
+        "TAVILY_API_KEY not found. "
+        "Add it to .env or .streamlit/secrets.toml"
+    )
 
 
 # ============================================================
@@ -36,10 +73,10 @@ os.environ["TAVILY_API_KEY"] = TAVILY_API_KEY
 
 llm = ChatOpenAI(
     base_url="https://openrouter.ai/api/v1",
-    model="openrouter/free",
     api_key=OPENROUTER_API_KEY,
-    max_tokens=700,
+    model="openrouter/free",
     temperature=0.2,
+    max_tokens=700,
 )
 
 
@@ -68,7 +105,7 @@ class AgentState(TypedDict):
 # SAFE LLM CALL
 # ============================================================
 
-def safe_llm_call(prompt: str, retries: int = 2):
+def safe_llm_call(prompt: str, retries: int = 0):
 
     for attempt in range(retries + 1):
 
@@ -80,11 +117,16 @@ def safe_llm_call(prompt: str, retries: int = 2):
 
         except Exception as e:
 
+            print("\n========== LLM ERROR ==========")
+            print("Error Type:", type(e).__name__)
+            print("Error:", str(e))
+            print("================================\n")
+
             error_message = str(e).lower()
 
-            # ------------------------------------------------
+            # -----------------------------------------------
             # RATE LIMIT
-            # ------------------------------------------------
+            # -----------------------------------------------
 
             if (
                 "rate limit" in error_message
@@ -97,26 +139,33 @@ def safe_llm_call(prompt: str, retries: int = 2):
 
                     wait_time = 2 ** attempt
 
+                    print(
+                        f"Rate limit detected. "
+                        f"Retrying in {wait_time} seconds..."
+                    )
+
                     time.sleep(wait_time)
 
                     continue
 
                 return (
                     "⚠️ OpenRouter rate limit reached.\n\n"
-                    "The free model has reached its current "
-                    "usage limit. Please try again later."
+                    "The selected free model has reached "
+                    "its current usage limit.\n\n"
+                    "Please try again later."
                 )
 
-            # ------------------------------------------------
+            # -----------------------------------------------
             # OTHER ERROR
-            # ------------------------------------------------
+            # -----------------------------------------------
 
             return (
-                "⚠️ AI service error.\n\n"
-                "Please try again later."
+                f"❌ LLM Error\n\n"
+                f"Error Type: {type(e).__name__}\n\n"
+                f"Details: {str(e)}"
             )
 
-    return "⚠️ AI service temporarily unavailable."
+    return "❌ AI service temporarily unavailable."
 
 
 # ============================================================
@@ -124,15 +173,6 @@ def safe_llm_call(prompt: str, retries: int = 2):
 # ============================================================
 
 def should_use_search(query: str) -> bool:
-
-    """
-    Rule-based search detection.
-
-    This replaces the old decide_node LLM call.
-
-    Therefore every user query does NOT require an extra
-    LLM request just to decide whether search is needed.
-    """
 
     query_lower = query.lower()
 
@@ -143,9 +183,10 @@ def should_use_search(query: str) -> bool:
         "recent",
         "today",
         "current",
-        "now",
+        "right now",
         "this week",
         "this month",
+        "this year",
 
         # News
         "news",
@@ -157,17 +198,15 @@ def should_use_search(query: str) -> bool:
         "study",
         "paper",
 
-        # Search
+        # Explicit web search
         "search",
         "look up",
         "find online",
         "on the internet",
 
-        # Price / comparison
+        # Price
         "price",
         "pricing",
-        "cost",
-        "compare",
 
         # Travel / local
         "weather",
@@ -175,9 +214,7 @@ def should_use_search(query: str) -> bool:
         "hotel",
         "travel",
 
-        # Product / company
-        "company",
-        "product",
+        # Technology
         "release",
         "version",
         "documentation",
@@ -199,6 +236,11 @@ def router_node(state: AgentState):
         state["query"]
     )
 
+    print(
+        f"\nRouter decision: "
+        f"{'WEB SEARCH' if use_search else 'DIRECT ANSWER'}"
+    )
+
     return {
         "use_search": use_search
     }
@@ -211,11 +253,14 @@ def router_node(state: AgentState):
 def planner_node(state: AgentState):
 
     prompt = f"""
+You are a research planning assistant.
+
 Create a short step-by-step research plan for:
 
-{state['query']}
+{state["query"]}
 
 Keep the plan concise.
+Only include important research steps.
 """
 
     plan = safe_llm_call(prompt)
@@ -233,6 +278,8 @@ def research_node(state: AgentState):
 
     try:
 
+        print("\nRunning Tavily web search...")
+
         results = search.invoke(
             state["query"]
         )
@@ -243,10 +290,15 @@ def research_node(state: AgentState):
 
     except Exception as e:
 
+        print("\n========== TAVILY ERROR ==========")
+        print(type(e).__name__)
+        print(str(e))
+        print("==================================\n")
+
         return {
             "research": (
-                "Web search failed. "
-                "Answer using the available information."
+                "Web search failed.\n"
+                f"Error: {str(e)}"
             )
         }
 
@@ -263,10 +315,14 @@ You are a helpful AI assistant.
 Answer the following user question clearly
 and accurately.
 
-User question:
-{state['query']}
+USER QUESTION:
+{state["query"]}
 
-Keep the answer concise but useful.
+Instructions:
+
+1. Directly answer the question.
+2. Keep the answer concise but useful.
+3. Give an example when helpful.
 """
 
     answer = safe_llm_call(prompt)
@@ -285,25 +341,26 @@ def writer_node(state: AgentState):
     prompt = f"""
 You are an AI research assistant.
 
-Answer the user's question using the research
-information provided below.
+Answer the user's question using the web research
+provided below.
 
 USER QUESTION:
-{state['query']}
+{state["query"]}
 
 RESEARCH PLAN:
-{state.get('plan', '')}
+{state.get("plan", "")}
 
 WEB RESEARCH:
-{state.get('research', '')}
+{state.get("research", "")}
 
 Instructions:
 
-1. Answer the actual user question.
+1. Answer the user's actual question.
 2. Use the research information when relevant.
 3. Do not invent facts.
-4. If the research is insufficient, say so.
-5. Keep the answer clear and useful.
+4. Do not make unsupported claims.
+5. If the research is insufficient, clearly say so.
+6. Keep the final answer clear and useful.
 """
 
     answer = safe_llm_call(prompt)
@@ -314,13 +371,15 @@ Instructions:
 
 
 # ============================================================
-# GRAPH
+# LANGGRAPH WORKFLOW
 # ============================================================
 
 workflow = StateGraph(AgentState)
 
 
-# Nodes
+# ============================================================
+# NODES
+# ============================================================
 
 workflow.add_node(
     "router",
@@ -415,4 +474,3 @@ workflow.add_edge(
 # ============================================================
 
 app = workflow.compile()
-
